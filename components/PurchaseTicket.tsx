@@ -1,12 +1,11 @@
 "use client";
 
-import { createStripeCheckoutSession } from "@/app/actions/createStripeCheckoutSession";
 import { Id } from "@/convex/_generated/dataModel";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useUser } from "@clerk/nextjs";
 import { api } from "@/convex/_generated/api";
-import { useQuery } from "convex/react";
+import { useQuery, useMutation } from "convex/react";
 import ReleaseTicket from "./ReleaseTicket";
 import { Ticket } from "lucide-react";
 
@@ -20,18 +19,29 @@ export default function PurchaseTicket({ eventId }: { eventId: Id<"events"> }) {
 
   const [timeRemaining, setTimeRemaining] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [currentTime, setCurrentTime] = useState<number>(0);
 
   const offerExpiresAt = queuePosition?.offerExpiresAt ?? 0;
-  const isExpired = Date.now() > offerExpiresAt;
+
+  useEffect(() => {
+    // Initialize current time on client side only
+    setCurrentTime(Date.now());
+    const timer = setInterval(() => {
+      setCurrentTime(Date.now());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const isExpired = currentTime > offerExpiresAt;
 
   useEffect(() => {
     const calculateTimeRemaining = () => {
-      if (isExpired) {
+      if (!currentTime || isExpired) {
         setTimeRemaining("Expired");
         return;
       }
 
-      const diff = offerExpiresAt - Date.now();
+      const diff = offerExpiresAt - currentTime;
       const minutes = Math.floor(diff / 1000 / 60);
       const seconds = Math.floor((diff / 1000) % 60);
 
@@ -47,30 +57,30 @@ export default function PurchaseTicket({ eventId }: { eventId: Id<"events"> }) {
     };
 
     calculateTimeRemaining();
-    const interval = setInterval(calculateTimeRemaining, 1000);
-    return () => clearInterval(interval);
-  }, [offerExpiresAt, isExpired]);
+  }, [currentTime, offerExpiresAt, isExpired]);
+
+  const purchaseTicket = useMutation(api.tickets.purchaseTicket);
 
   const handlePurchase = async () => {
     if (!user) return;
 
     try {
       setIsLoading(true);
-      const { sessionUrl } = await createStripeCheckoutSession({
-        eventId,
-      });
-
-      if (sessionUrl) {
-        router.push(sessionUrl);
-      }
+      await purchaseTicket({ eventId });
+      router.push(`/tickets`); // Redirect to tickets page after purchase
     } catch (error) {
-      console.error("Error creating checkout session:", error);
+      console.error("Error purchasing ticket:", error);
     } finally {
       setIsLoading(false);
     }
   };
 
   if (!user || !queuePosition || queuePosition.status !== "offered") {
+    return null;
+  }
+
+  // Don't render anything until we have the current time on client side
+  if (!currentTime) {
     return null;
   }
 
@@ -105,9 +115,7 @@ export default function PurchaseTicket({ eventId }: { eventId: Id<"events"> }) {
           disabled={isExpired || isLoading}
           className="w-full bg-gradient-to-r from-amber-500 to-amber-600 text-white px-8 py-4 rounded-lg font-bold shadow-md hover:from-amber-600 hover:to-amber-700 transform hover:scale-[1.02] transition-all duration-200 disabled:from-gray-400 disabled:to-gray-500 disabled:cursor-not-allowed disabled:hover:scale-100 text-lg"
         >
-          {isLoading
-            ? "Redirecting to checkout..."
-            : "Purchase Your Ticket Now →"}
+          {isLoading ? "Processing purchase..." : "Purchase Your Ticket Now →"}
         </button>
 
         <div className="mt-4">
